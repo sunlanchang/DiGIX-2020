@@ -1,0 +1,1 @@
+pip install pandas sklearn deepctr tqdm tables gensim tensorflow-determinism
