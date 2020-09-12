@@ -33,6 +33,7 @@ from gensim.models.doc2vec import TaggedDocument
 import gc
 from base import Cache
 from tqdm import tqdm
+import multiprocessing
 
 
 def reduce_mem(df, use_float16=False):
@@ -72,6 +73,7 @@ def reduce_mem(df, use_float16=False):
     print('{:.2f} Mb, {:.2f} Mb ({:.2f} %)'.format(
         start_mem, end_mem, 100 * (start_mem - end_mem) / start_mem))
     return df
+
 
 '''
 # 封装类
@@ -157,10 +159,11 @@ for var in cols_to_emb:
 print('text_embedding_finished!')
 '''
 
-'''
-def get_embedding_pro(df_raw, sentence_id, word_id, emb_size=128, 
-            dropna=False, n_jobs=16, method='skipgram', 
-            hs=0,negative=10,epoch=10,return_model=True,embedding_type='fasttext',flag='normal'):
+
+def get_embedding_pro(df_raw, sentence_id, word_id, emb_size=128, window=10,
+                      dropna=False, n_jobs=4, method='skipgram',
+                      hs=0, negative=10, epoch=10, return_model=False,
+                      embedding_type='fasttext', slide_window=1):
     """
     Now, set min_count=1 to avoid OOV...
     How to deal with oov in a more appropriate way...
@@ -171,7 +174,7 @@ def get_embedding_pro(df_raw, sentence_id, word_id, emb_size=128,
     word_id: like item ID, will be coerced into str
     emb_size: default 8
     dropna: default False, nans will be filled with 'NULL_zhangqibot'. if True, nans will all be dropped.
-    n_jobs: 16 cpus to use as default
+    n_jobs: 4 cpus to use as default
     method: 'sg'/'skipgram' or 'cbow'
         sg : {0, 1}, optional
             Training algorithm: 1 for skip-gram; otherwise CBOW.
@@ -204,48 +207,55 @@ def get_embedding_pro(df_raw, sentence_id, word_id, emb_size=128,
     run_w2v(sentence_id,word_id='industry',emb_size=64)
     ----------
     """
-    if method.lower() in ['sg','skipgram']:
-        sg=1
-        logger.info("## Use skip-gram ##")
+    if method.lower() in ['sg', 'skipgram']:
+        sg = 1
     elif method.lower() in ['cbow']:
-        sg=0
-        logger.info("## Use CBOW ##")
+        sg = 0
     else:
         raise NotImplementedError
     list_col_nm = f'{sentence_id}__{word_id}_list'
     if (n_jobs is None) or (n_jobs <= 0):
         n_jobs = multiprocessing.cpu_count()
-    logger.info(f"========== W2V:  {sentence_id} {word_id} ==========")
-    df = df_raw[[sentence_id, word_id]].copy()
+    print(f"========== W2V:  {sentence_id} {word_id} ==========")
+
+    df = df_raw[[sentence_id, word_id, 'pt_d']].copy()
+
     if df[sentence_id].isnull().sum() > 0:
-        logger.warning("NaNs exist in sentence_id column!!")
+        print("NaNs exist in sentence_id column!!")
     if dropna:
         df = df.dropna(subset=[sentence_id, word_id])
     else:
-        df = df.fillna('NULL_zhangqibot')
-    df = df.astype(str)
-    tmp = df.groupby(sentence_id,
-                     as_index=False)[word_id].agg({list_col_nm: list})
-    sentences = tmp[list_col_nm].values.tolist()
+        df[word_id] = df[word_id].fillna(-1).astype(int).astype(str)
+        df[sentence_id] = df[sentence_id].fillna(-1).astype(int).astype(str)
+
+    df['pt_d_last'] = df['pt_d'] + slide_window
+    fe = df.groupby([sentence_id, 'pt_d_last'])[word_id].apply(lambda x: list(x)).reset_index()
+    fe.columns = [sentence_id, 'pt_d', list_col_nm]
+    df = df.merge(fe, on=[sentence_id, 'pt_d'], how='left')
+    df[list_col_nm] = df[list_col_nm].map(lambda x: x if isinstance(x, list) else [])
+    # 加上本行的
+    df[word_id + '_add'] = df[word_id].map(lambda x: [x])
+    df[list_col_nm] = df[list_col_nm] + df[word_id + '_add']
+    sentences = df[list_col_nm].values.tolist()
     all_words_vocabulary = df[word_id].unique().tolist()
-    del tmp[list_col_nm]
+    del df[list_col_nm], df['pt_d_last'], df[word_id + '_add']
     gc.collect()
-    if embedding_type=='w2v':
+    if embedding_type == 'w2v':
         model = Word2Vec(
-        sentences,
-        size=emb_size,
-        window=10,
-        workers=n_jobs,
-        min_count=1,  # 最低词频. min_count>1会出现OOV
-        sg=sg,  # 1 for skip-gram; otherwise CBOW.
-        hs=hs,  # If 1, hierarchical softmax will be used for model training
-        negative=negative,  # hs=1 + negative 负采样
-        iter=epoch,
-        seed=0)
-    elif embedding_type =='fasttext':
-        model = models.FastText( sentences, size=emb_size, 
-                                window=150, workers=n_jobs,seed=0,sg=sg,iter=epoch)
-    
+            sentences,
+            size=emb_size,
+            window=window,
+            workers=n_jobs,
+            min_count=1,  # 最低词频. min_count>1会出现OOV
+            sg=sg,  # 1 for skip-gram; otherwise CBOW.
+            hs=hs,  # If 1, hierarchical softmax will be used for model training
+            negative=negative,  # hs=1 + negative 负采样
+            iter=epoch,
+            seed=0)
+    else:
+        model = models.FastText(sentences, size=emb_size,
+                                window=window, workers=n_jobs, seed=0, sg=sg, iter=epoch)
+
     # get word embedding matrix
     emb_dict = {}
     for word_i in all_words_vocabulary:
@@ -253,7 +263,7 @@ def get_embedding_pro(df_raw, sentence_id, word_id, emb_size=128,
             emb_dict[word_i] = model.wv[word_i]
         else:
             emb_dict[word_i] = np.zeros(emb_size)
-    
+
     # get sentence embedding matrix
     emb_matrix = []
     for seq in sentences:
@@ -266,60 +276,80 @@ def get_embedding_pro(df_raw, sentence_id, word_id, emb_size=128,
         else:
             emb_matrix.append([0] * emb_size)
     emb_matrix = np.array(emb_matrix)
+    emb_cols = []
     for i in range(emb_size):
-        tmp[f'{sentence_id}_{word_id}_emb_{i}'] = emb_matrix[:, i]
-    
+        df[f'EMB_{embedding_type}_{sentence_id}_{word_id}_{slide_window}_emb_{i}'] = emb_matrix[:, i]
+        emb_cols.append(f'EMB_{embedding_type}_{sentence_id}_{word_id}_{slide_window}_emb_{i}')
+
     if not return_model:
         model = None
-    return {"word_emb_dict": emb_dict, "sentence_emb_df": tmp, 'model':model}
+    return {"word_emb_dict": emb_dict, "sentence_emb_df": df[emb_cols], 'model': model}
 
-#%%
-
-# datasplit
-datalog['time_week'] = datalog['time']%7
-datalog['time_week'] = datalog['time_week'].map(lambda x:1 if x<2 else 0)
-    
-
-#%%
-
-datalog['time_diff'].describe()
-
-#%%
-
-# emb_size_dict={'click_times':8,'creative_id':64,
-#               'ad_id':64,'product_id':16,'advertiser_id':32,'product_category':8,'industry':8}
-# for word_id in tqdm(['click_times','creative_id','ad_id','product_id','advertiser_id','product_category','industry']):
-#     # 普通embedding
-#     res_dict= get_embedding_pro(datalog,sentence_id='user_id',word_id=var,
-#                       emb_size=emb_size,dropna=False,n_jobs=31,return_model=False,epoch=10)
-#     Cache.cache_data(res_dict,nm_marker=f'EMB_DICT_W2V_SG_10EPOCH_FULLDAY_{sentence_id}_{word_id}')
-
-#%%
-
-for var in ['click_times','creative_id','ad_id','product_id','advertiser_id','product_category','industry']:
-    datalog[var] = datalog[var].astype(str)
-def run_w2v(df,sentence_id,word_id,emb_size=256,embedding_type='w2v',flag='normal'):
-    res_dict= get_embedding_pro(df,sentence_id=sentence_id,word_id=word_id,
-                      emb_size=emb_size,dropna=False,n_jobs=30,return_model=False,epoch=5,embedding_type=embedding_type,flag=flag)
-    Cache.cache_data(res_dict,nm_marker=f'EMB_DICT_150_{sentence_id}_{word_id}_{embedding_type}_{flag}')
-'''
 
 if __name__ == "__main__":
     # base feature
     # data = Cache.reload_cache('CACHE_data_0912.pkl')
     # 造一份代码
     df = pd.DataFrame(np.random.randint(0, 21, (5000, 5)), columns=['uid', 'pt_d', 'task_id', 'adv_id', 'values'])
-    df['task_id'] = df['task_id'] // 5
-    df['adv_id'] = df['adv_id'] // 3
-    df['pt_d'] = df['pt_d'] // 4
+    df['task_id'] = df['task_id']
+    df['adv_id'] = df['adv_id']
+    df['pt_d'] = df['pt_d'] // 5
     df = df.sort_values(['uid', 'pt_d', 'task_id', 'adv_id']).reset_index(drop=True)
     df['label'] = np.random.randint(0, 2, (5000, 1))
     df = df.reset_index()
     df['communication_onlinerate'] = [' '.join(str(j) for j in np.random.randint(0, 25, (20,))) for i in
                                       range(df.shape[0])]
+    # 直接做embedding
+    sentences = df['communication_onlinerate'].values.tolist()
+    model = Word2Vec(
+        sentences,
+        size=8,
+        window=5,
+        workers=4,
+        min_count=1,  # 最低词频. min_count>1会出现OOV
+        sg=0,  # 1 for skip-gram; otherwise CBOW.
+        hs=0,  # If 1, hierarchical softmax will be used for model training
+        negative=5,  # hs=1 + negative 负采样
+        iter=5,
+        seed=0)
+    # get sentence embedding matrix
+    emb_matrix = []
+    for seq in sentences:
+        vec = []
+        for w in seq:
+            if w in model.wv:
+                vec.append(model.wv[w])
+        if len(vec) > 0:
+            emb_matrix.append(np.mean(vec, axis=0))
+        else:
+            emb_matrix.append([0] * 8)
+    emb_matrix = np.array(emb_matrix)
+    emb_cols = []
+    for i in range(8):
+        df[f'EMB_w2v_uid_communication_onlinerate_0_emb_{i}'] = emb_matrix[:, i]
+
     # 过去一天的序列，做embedding
+    n_jobs = 4
+    sparse_features = ['task_id', 'adv_id', 'label']
+
+
     # w2v
+    def run_w2v(df, sentence_id, word_id, emb_size=256, window=10, slid_window=1, embedding_type='w2v'):
+        res_dict = get_embedding_pro(df, sentence_id=sentence_id, word_id=word_id, window=window,
+                                     slide_window=slid_window,
+                                     emb_size=emb_size, dropna=False, n_jobs=n_jobs, return_model=False, epoch=10,
+                                     embedding_type=embedding_type)
+        Cache.cache_data(res_dict,
+                         nm_marker=f'EMB_DICT_{window}_{slid_window}_{emb_size}_{sentence_id}_{word_id}_{embedding_type}')
+        return res_dict["sentence_emb_df"]
 
-    # tfidf
 
+    for var in sparse_features:
+        fe = run_w2v(df, 'uid', var, emb_size=16, window=8, embedding_type='w2v')
+        df = pd.concat([df, fe], axis=1)
+        fe = run_w2v(df, 'uid', var, emb_size=16, window=8, embedding_type='fasttext')
+        df = pd.concat([df, fe], axis=1)
 
+    cols_to_save = [i for i in df.columns if i.find('EMB_') > -1]
+    df = df[['index'] + cols_to_save]
+    Cache.cache_data(df, nm_marker='EMB_feature0912')

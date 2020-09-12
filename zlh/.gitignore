@@ -1,3 +1,6 @@
+*.csv
+*.pkl
+
 # 写入数据文件夹，方式上传数据
 
 # Byte-compiled / optimized / DLL files
