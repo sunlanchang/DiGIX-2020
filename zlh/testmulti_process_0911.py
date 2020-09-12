@@ -25,7 +25,6 @@ pd.set_option('display.float_format', lambda x: '%.5f' % x)
 pd.set_option('max_colwidth', 200)
 pd.set_option('display.width', 5000)
 
-
 from multiprocessing import Pool
 from tqdm import tqdm
 
@@ -104,8 +103,10 @@ def get_groupby_feature(df_list):
     window_list = params['window']  # 过去几天的统计信息[1,8]
     sparse_features = params['sparse_features']
     dense_features = params['dense_features']
-
-    febase = data[['index', 'uid', 'pt_d'] + sparse_features + dense_features]
+    cols = ['index', 'pt_d'] + sparse_features + dense_features
+    if key not in cols:
+        cols = [key] + cols
+    febase = data[cols]
     # data[['index', 'uid', 'task_id', 'adv_id', 'pt_d']]  # .drop_duplicates(subset=['index'])
 
     sparse_aggfunc = ['count', 'nunique']
@@ -115,12 +116,11 @@ def get_groupby_feature(df_list):
         # 只算过去一天
         if window >= 1:
             data['pt_d_last'] = data['pt_d'] + window
-            count_flag = False
             count_col = ''
             # by key
             for var in sparse_features:
                 for aggf in sparse_aggfunc:
-                    if count_flag and aggf == 'count':
+                    if len(count_col) > 0 and aggf == 'count':
                         # 多列只算一次count
                         continue
                     else:
@@ -129,8 +129,8 @@ def get_groupby_feature(df_list):
                             columns={aggf: f'{key}_{var}_{window}_{aggf}'}).reset_index()
                         fe.columns = [key, 'pt_d', f'{key}_{var}_{window}_{aggf}']
                         febase = febase.merge(fe, on=[key, 'pt_d'], how='left')
-                        count_col = f'{key}_{var}_{window}_{aggf}'# key昨天曝光次数
-                        count_flag = True
+                        if aggf == 'count':
+                            count_col = f'{key}_{var}_{window}_{aggf}'  # key昨天曝光次数
                 # 多样性
                 febase[f'{key}_{var}_{window}_nunique_d_count'] = febase[f'{key}_{var}_{window}_nunique'] / febase[
                     count_col]
@@ -152,26 +152,20 @@ def get_groupby_feature(df_list):
             # 用户昨天ctr
             febase[f'{key}_ctr_{window}'] = febase[f'{key}_clicktimes_{window}'] / (febase[count_col] + alpha)
 
-            # by var
-            # 过去一天对各个sparse_features的曝光率，点击率，ctr
-            for var in sparse_features:
-                # 昨天这项的曝光次数
-                fe = data.groupby([var, 'pt_d_last'])['label'].count().rename(f'{var}_curr_{window}').reset_index()
-                fe.columns = [var, 'pt_d', f'{var}_curr_{window}']
-                febase = febase.merge(fe, on=[var, 'pt_d'], how='left')
-                # # 该项曝光占总曝光的比例
-                # febase['pt_d', f'{var}_curr_rate_{window}'] = febase['pt_d', f'{var}_curr_{window}'] / (
-                #         febase[count_col] + alpha)
-                # 昨天这项的总点击量
-                fe = data.groupby([var, 'pt_d_last'])['label'].sum().rename(f'{var}_clicktimes_{window}').reset_index()
-                fe.columns = [var, 'pt_d', f'{var}_clicktimes_{window}']
-                febase = febase.merge(fe, on=[var, 'pt_d'], how='left')
-                # # 该项点击占总点击的比例
-                # febase[f'{var}_clicktimes_rate_{window}'] = febase[f'{var}_clicktimes_{window}'] / (
-                #         febase[f'{key}_clicktimes_{window}'] + alpha)
-                # 昨天这项的ctr
-                febase[f'{var}_ctr_{window}'] = febase[f'{var}_clicktimes_{window}'] / (
-                        febase[f'{var}_curr_{window}'] + alpha)
+            # # by var 通过别的key计算
+            # # 过去一天对各个sparse_features的曝光率，点击率，ctr
+            # for var in sparse_features:
+            #     # 昨天这项的曝光次数
+            #     fe = data.groupby([var, 'pt_d_last'])['label'].count().rename(f'{var}_curr_{window}').reset_index()
+            #     fe.columns = [var, 'pt_d', f'{var}_curr_{window}']
+            #     febase = febase.merge(fe, on=[var, 'pt_d'], how='left')
+            #     # 昨天这项的总点击量
+            #     fe = data.groupby([var, 'pt_d_last'])['label'].sum().rename(f'{var}_clicktimes_{window}').reset_index()
+            #     fe.columns = [var, 'pt_d', f'{var}_clicktimes_{window}']
+            #     febase = febase.merge(fe, on=[var, 'pt_d'], how='left')
+            #     # 昨天这项的ctr
+            #     febase[f'{var}_ctr_{window}'] = febase[f'{var}_clicktimes_{window}'] / (
+            #             febase[f'{var}_curr_{window}'] + alpha)
 
             # 过去一天对今天行样本里的dense_feature的变化特征
             for var in dense_features:
@@ -202,14 +196,14 @@ def get_groupby_feature(df_list):
                 febase[f'{key}_{var}_ctr_{window}'] = febase[f'{key}_{var}_clicktimes_{window}'] / (
                         febase[f'{key}_{var}_curr_{window}'] + alpha)
 
-    for var in ['uid', 'pt_d', 'task_id', 'adv_id']:
+    for var in ['uid', 'pt_d', 'task_id', 'adv_id'] + sparse_features + dense_features:
         # 留index返回进行merge
         if var in febase.columns:
             del febase[var]
     for var in febase.columns:
-        if var.find('count') > -1 or var.find('nunique') > -1 or var.find('currnums') > -1 \
-                or var.find('times') > -1 or var.find('curr') > -1:
-            febase[var] = febase[var].fillna(0).astype(int)
+        if var.find('count') > -1 or var.find('nunique') > -1 \
+                or var.find('times') > -1 or var.find('curr') > -1 or var.find('ctr') > -1:
+            febase[var] = febase[var].fillna(0)
     return febase
 
 
@@ -217,6 +211,7 @@ if __name__ == "__main__":
     df = pd.DataFrame(np.random.randint(0, 21, (500, 5)), columns=['uid', 'pt_d', 'task_id', 'adv_id', 'values'])
     df['task_id'] = df['task_id'] // 5
     df['adv_id'] = df['adv_id'] // 3
+    df['pt_d'] = df['pt_d'] // 4
     df = df.sort_values(['uid', 'pt_d', 'task_id', 'adv_id']).reset_index(drop=True)
     df['label'] = np.random.randint(0, 2, (500, 1))
     df = df.reset_index()
@@ -226,44 +221,18 @@ if __name__ == "__main__":
               'sparse_features': ['task_id', 'adv_id'],
               'dense_features': ['values']}
 
-
     features_0 = multi_process_cal(get_groupby_feature, df, params, process_nums=4)
-    df = df.merge(features_0, on='index', how='left')
-    # params = {'key': 'task_id',
-    #           'window': [1, 8],
-    #           'sparse_features': ['uid'],
-    #           'dense_features': ['values']}
-    # features_1 = multi_process_cal(get_groupby_feature, df, params, process_nums=3)
-    # df = df.merge(features_1, on='index', how='left')
-    # params = {'key': 'adv_id',
-    #           'window': [1, 8],
-    #           'sparse_features': ['uid'],
-    #           'dense_features': ['values']}
-    # features_2 = multi_process_cal(get_groupby_feature, df, params, process_nums=3)
-    # df = df.merge(features_2, on='index', how='left')
+    params = {'key': 'task_id',
+              'window': [1, 2, 3],
+              'sparse_features': ['uid'],
+              'dense_features': ['values']}
+    features_1 = multi_process_cal(get_groupby_feature, df, params, process_nums=4)
+    params = {'key': 'adv_id',
+              'window': [1, 2, 3],
+              'sparse_features': ['uid'],
+              'dense_features': ['values']}
+    features_2 = multi_process_cal(get_groupby_feature, df, params, process_nums=4)
 
-    # # 每个item点击前用户的ctr,点击后用户的ctr
-    # def ctr_before_after(x, var):
-    #     index_now = x['index']
-    #     item_now = x[var]
-    #     item_list = x[var + '_list']
-    #     label_list = x['label_list']
-    #     index_list = x['index_list']
-    #     index_f_c = index_list.index(index_now)
-    #     index_f_i = item_list.index(item_now)
-    #     ctr_mean = np.nanmean(label_list[index_f_i + 1:index_f_c - 1])
-    #     return [index_f_c - index_f_i, ctr_mean]
-    #
-    #
-    # fe0 = df.groupby('uid').apply(lambda x: list(x['index'])).rename('index_list').reset_index()
-    # df = df.merge(fe0, on='uid', how='left')
-    # fe0 = df.groupby('uid').apply(lambda x: list(x['label'])).rename('label_list').reset_index()
-    # df = df.merge(fe0, on='uid', how='left')
-    # for var in ['task_id', 'adv_id']:
-    #     fe0 = df.groupby('uid').apply(lambda x: list(x[var])).rename(var + '_list').reset_index()
-    #     df = df.merge(fe0, on='uid', how='left')
-    #     ar = np.array(list(df.apply(lambda x: ctr_before_after(x, var), axis=1)))
-    #     df[var + '_ctr_before'] = ar[:, 0]
-    #     df[var + '_ctr_after'] = ar[:, 1]
-    #     del df[var + '_list']
-    # del df['index_list'], df['label_list']
+    df = df.merge(features_0, on='index', how='left')
+    df = df.merge(features_1, on='index', how='left')
+    df = df.merge(features_2, on='index', how='left')
