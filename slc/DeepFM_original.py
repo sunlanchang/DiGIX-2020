@@ -1,0 +1,374 @@
+import shutil
+from pathlib import Path
+import pandas as pd
+import numpy as np
+
+import tensorflow as tf
+import keras
+from keras.utils import to_categorical
+import keras.backend as K
+from tensorflow.keras.utils import multi_gpu_model
+
+from sklearn.metrics import log_loss, roc_auc_score
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler
+from sklearn.model_selection import StratifiedKFold
+
+from deepctr.models import DeepFM
+from deepctr.feature_column import SparseFeat, DenseFeat, get_feature_names
+# from deepctr.inputs import SparseFeat, DenseFeat, get_feature_names
+
+import gc
+import pickle
+import time
+import argparse
+from tqdm import tqdm
+import os
+
+os.environ["CUDA_DEVICE_ORDER"] = 'PCI_BUS_ID'
+os.environ["CUDA_VISIBLE_DEVICES"] = '0,1,2,3'
+os.environ["TF_KERAS"] = '1'
+
+config = tf.ConfigProto()
+config.gpu_options.allow_growth = True  # allocate dynamically
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--debug', action='store_true',
+                    help='从npy文件加载数据',
+                    default=False)
+parser.add_argument('--not_train_embedding', action='store_false',
+                    help='从npy文件加载数据',
+                    default=True)
+parser.add_argument('--batch_size', type=int,
+                    help='batch size大小',
+                    default=256)
+parser.add_argument('--epoch', type=int,
+                    help='epoch 大小',
+                    default=5)
+parser.add_argument('--num_transformer', type=int,
+                    help='transformer层数',
+                    default=1)
+parser.add_argument('--head_attention', type=int,
+                    help='transformer head个数',
+                    default=1)
+parser.add_argument('--num_lstm', type=int,
+                    help='LSTM 个数',
+                    default=1)
+parser.add_argument('--train_examples', type=int,
+                    help='训练数据，默认为训练集，不包含验证集，调试时候可以设置1000',
+                    default=810000)
+parser.add_argument('--val_examples', type=int,
+                    help='验证集数据，调试时候可以设置1000',
+                    default=90000)
+args = parser.parse_args()
+
+
+def get_callbacks():
+
+    checkpoint = tf.keras.callbacks.ModelCheckpoint("checkpoint/epoch_{epoch:02d}.hdf5",
+                                                    save_weights_only=True,
+                                                    monitor='val_auroc',
+                                                    verbose=1,
+                                                    save_best_only=False,
+                                                    mode='max',
+                                                    period=1)
+
+    earlystop = tf.keras.callbacks.EarlyStopping(
+        monitor="val_auroc",
+        min_delta=0.00001,
+        patience=2,
+        verbose=1,
+        mode="max",
+        baseline=None,
+        # restore_best_weights=True,
+    )
+
+    reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_auroc',
+                                                     factor=0.5,
+                                                     verbose=1,
+                                                     patience=2,
+                                                     min_lr=0.0000001)
+
+    return [earlystop, reduce_lr, checkpoint]
+
+
+def multi_category_focal_loss2(gamma=2., alpha=.25):
+    """
+    focal loss for multi category of multi label problem
+    适用于多分类或多标签问题的focal loss
+    alpha控制真值y_true为1/0时的权重
+        1的权重为alpha, 0的权重为1-alpha
+    当你的模型欠拟合，学习存在困难时，可以尝试适用本函数作为loss
+    当模型过于激进(无论何时总是倾向于预测出1),尝试将alpha调小
+    当模型过于惰性(无论何时总是倾向于预测出0,或是某一个固定的常数,说明没有学到有效特征)
+        尝试将alpha调大,鼓励模型进行预测出1。
+    Usage:
+     model.compile(loss=[multi_category_focal_loss2(
+         alpha=0.25, gamma=2)], metrics=["accuracy"], optimizer=adam)
+    """
+    epsilon = 1.e-7
+    gamma = float(gamma)
+    alpha = tf.constant(alpha, dtype=tf.float32)
+
+    def multi_category_focal_loss2_fixed(y_true, y_pred):
+        y_true = tf.cast(y_true, tf.float32)
+        y_pred = tf.clip_by_value(y_pred, epsilon, 1. - epsilon)
+
+        alpha_t = y_true * alpha + \
+            (tf.ones_like(y_true) - y_true) * (1 - alpha)
+        y_t = tf.multiply(y_true, y_pred) + tf.multiply(1 - y_true, 1 - y_pred)
+        ce = -tf.log(y_t)
+        weight = tf.pow(tf.subtract(1., y_t), gamma)
+        fl = tf.multiply(tf.multiply(weight, ce), alpha_t)
+        loss = tf.reduce_mean(fl)
+        return loss
+
+    return multi_category_focal_loss2_fixed
+# In[2]:
+
+
+def reduce_mem(df):
+    starttime = time.time()
+    numerics = ['int16', 'int32', 'int64', 'float16', 'float32', 'float64']
+    start_mem = df.memory_usage().sum() / 1024**2
+    for col in df.columns:
+        col_type = df[col].dtypes
+        if col_type in numerics:
+            c_min = df[col].min()
+            c_max = df[col].max()
+            if pd.isnull(c_min) or pd.isnull(c_max):
+                continue
+            if str(col_type)[:3] == 'int':
+                if c_min > np.iinfo(np.int8).min and c_max < np.iinfo(np.int8).max:
+                    df[col] = df[col].astype(np.int8)
+                elif c_min > np.iinfo(np.int16).min and c_max < np.iinfo(np.int16).max:
+                    df[col] = df[col].astype(np.int16)
+                elif c_min > np.iinfo(np.int32).min and c_max < np.iinfo(np.int32).max:
+                    df[col] = df[col].astype(np.int32)
+                elif c_min > np.iinfo(np.int64).min and c_max < np.iinfo(np.int64).max:
+                    df[col] = df[col].astype(np.int64)
+            else:
+                if c_min > np.finfo(np.float16).min and c_max < np.finfo(np.float16).max:
+                    df[col] = df[col].astype(np.float16)
+                elif c_min > np.finfo(np.float32).min and c_max < np.finfo(np.float32).max:
+                    df[col] = df[col].astype(np.float32)
+                else:
+                    df[col] = df[col].astype(np.float64)
+    end_mem = df.memory_usage().sum() / 1024**2
+    print('-- Mem. usage decreased to {:5.2f} Mb ({:.1f}% reduction),time spend:{:2.2f} min'.format(end_mem,
+                                                                                                    100 *
+                                                                                                    (start_mem-end_mem)/start_mem,
+                                                                                                    (time.time()-starttime)/60))
+    return df
+
+
+# In[17]:
+def auroc(y_true, y_pred):
+    return tf.py_func(roc_auc_score, (y_true, y_pred), tf.double)
+
+
+# In[4]:
+
+train_test = pd.read_pickle('data/train_test_reduced.pkl')
+y_train_val = pd.read_pickle('data/label.pkl')
+if args.debug:
+    train_test = train_test.iloc[:1000000]  # slc
+    y_train_val = y_train_val.iloc[:50000]
+
+
+# train_test_reduced.to_pickle('data/train_test_reduced.pkl')
+
+
+# # 转化所有数据的特征列
+dense_features = ['age', 'city_rank', 'app_score', 'device_price', 'up_life_duration',
+                  'membership_life_duration', 'cmr_None']
+sparse_features = list(set(train_test.columns.tolist()) - set(dense_features))
+
+# %%time
+for feat in sparse_features:
+    lbe = LabelEncoder()
+    train_test[feat] = lbe.fit_transform(train_test[feat])
+
+mms = MinMaxScaler(feature_range=(0, 1))
+train_test[dense_features] = mms.fit_transform(train_test[dense_features])
+
+# 2.count #unique features for each sparse field,and record dense feature field name
+
+fixlen_feature_columns = [SparseFeat(feat, vocabulary_size=train_test[feat].nunique(), embedding_dim=10)
+                          for i, feat in enumerate(sparse_features)] + [DenseFeat(feat, 1,)
+                                                                        for feat in dense_features]
+
+dnn_feature_columns = fixlen_feature_columns
+linear_feature_columns = fixlen_feature_columns
+
+feature_names = get_feature_names(linear_feature_columns + dnn_feature_columns)
+
+
+# # 切分所有数据为训练集和测试集
+
+# In[7]:
+
+
+if args.debug:
+    x_train_val = train_test.iloc[:50000]
+    x_test = train_test.iloc[50000:]  # slc
+else:
+    x_train_val = train_test.iloc[:41907133]
+    x_test = train_test.iloc[41907133:]
+
+# In[8]:
+
+
+test_model_input = {name: x_test[name] for name in feature_names}
+
+
+# # 1 折训练
+
+# In[ ]:
+
+
+NUM_WORKERS = len(os.environ["CUDA_VISIBLE_DEVICES"].split(','))
+BATCH_SIZE = 8192 * NUM_WORKERS
+EPOCHS = 5
+
+N_FOLDS = 5
+CV_SEED = 0
+
+
+# In[ ]:
+
+
+train_and_val_model_input = {name: x_train_val[name] for name in feature_names}
+with tf.device("/cpu:0"):
+    model = DeepFM(linear_feature_columns=linear_feature_columns,
+                   dnn_feature_columns=dnn_feature_columns,
+                   #    dnn_dropout=0.1,
+                   dnn_hidden_units=(128, 128),
+                   task='binary')
+    model = multi_gpu_model(model, NUM_WORKERS)
+# model = DeepFM(linear_feature_columns=linear_feature_columns,
+#                dnn_feature_columns=dnn_feature_columns,
+#                #    dnn_dropout=0.1,
+#                dnn_hidden_units=(128, 128),
+#                task='binary')
+model.compile(
+    optimizer=tf.keras.optimizers.Adam(3e-4),
+    loss="binary_crossentropy",
+    #     loss=multi_category_focal_loss2(alpha=0.1),
+    metrics=[auroc], )
+
+
+dirpath = Path('checkpoint')
+if dirpath.exists() and dirpath.is_dir():
+    shutil.rmtree(dirpath)
+os.mkdir('checkpoint')
+
+
+hist = model.fit(train_and_val_model_input, y_train_val,
+                 batch_size=BATCH_SIZE,
+                 epochs=EPOCHS,
+                 verbose=2,
+                 validation_split=0.1,
+                 callbacks=get_callbacks()
+                 )
+
+
+# In[ ]:
+
+best_epoch = np.argmax(hist.history["val_auroc"])+1
+model.load_weights('checkpoint/epoch_{:02d}.hdf5'.format(best_epoch))
+print(hist.history["val_auroc"])
+print('loading epoch_{:02d}.hdf5'.format(best_epoch))
+
+pred_ans = model.predict(
+    test_model_input, verbose=1, batch_size=BATCH_SIZE)
+
+pred_ans = pred_ans.flatten()
+ans = pd.DataFrame(data={'id': np.array(
+    [i for i in range(1, pred_ans.shape[0]+1)]), 'probability': pred_ans})
+ans.to_csv('submission_DeepFM_countFeature.csv', index=False, header=True)
+
+# del model
+# gc.collect()
+# # In[ ]:
+
+
+# # EPOCHS = np.argmax(hist.history["val_auroc"])+1
+
+
+# # # K折训练模型
+
+# # In[10]:
+
+
+# skf = StratifiedKFold(n_splits=N_FOLDS, random_state=CV_SEED, shuffle=True)
+# folds = list(skf.split(x_train_val, y_train_val))
+
+
+# # In[22]:
+
+
+# score_val = []
+# model_prob = np.zeros((x_test.shape[0], 1, N_FOLDS), dtype='float32')
+
+# for count, (train_index, val_index) in enumerate(folds):
+
+#     print(f'{count} fold start...')
+#     print('#'*100)
+
+#     x_train = x_train_val.iloc[train_index]
+#     y_train = y_train_val.iloc[train_index]
+#     x_val = x_train_val.iloc[val_index]
+#     y_val = y_train_val.iloc[val_index]
+
+#     train_model_input = {name: x_train[name] for name in feature_names}
+#     val_model_input = {name: x_val[name] for name in feature_names}
+
+#     model = DeepFM(linear_feature_columns=linear_feature_columns,
+#                    dnn_feature_columns=dnn_feature_columns,
+#                    dnn_dropout=0.1,
+#                    dnn_hidden_units=(512, 128),
+#                    task='binary')
+#     model.compile(
+#         optimizer=keras.optimizers.Adam(1e-3),
+#         loss="binary_crossentropy",
+#         #         loss=multi_category_focal_loss2(alpha=0.1),
+#         metrics=[auroc], )
+
+#     hist = model.fit(train_model_input, y_train,
+#                      validation_data=(val_model_input, y_val),
+#                      batch_size=BATCH_SIZE,
+#                      epochs=EPOCHS,
+#                      verbose=1,
+#                      #                 validation_split=0.1,
+#                      callbacks=get_callbacks()+[]
+#                      )
+
+#     pred_ans = model.predict(
+#         test_model_input, verbose=1, batch_size=BATCH_SIZE)
+#     model_prob[:, :, count] = pred_ans
+#     del train_model_input, val_model_input
+#     gc.collect()
+#     try:
+#         del model
+#         gc.collect()
+#         K.clear_session()
+#     except Exception as e:
+#         print(e)
+#     print("v" * 100)
+#     print(hist.history)
+#     print("^" * 100)
+#     score_val.append(np.max(hist.history["val_auroc"]))
+
+# print(f"offline score: {score_val}")
+# print(f"offline score by folds: {np.mean(score_val)}")
+# print("All Done!")
+
+
+# # In[ ]:
+
+
+# model_prob = np.mean(model_prob, axis=2).flatten()
+# ans = pd.DataFrame(data={'id': np.array(
+#     [i for i in range(1, 1000000+1)]), 'probability': model_prob})
+# ans.to_csv('submission_DeepFM_k5.csv', index=False, header=True)
