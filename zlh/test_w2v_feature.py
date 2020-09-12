@@ -329,7 +329,7 @@ if __name__ == "__main__":
         df[f'EMB_w2v_uid_communication_onlinerate_0_emb_{i}'] = emb_matrix[:, i]
 
     # 过去一天的序列，做embedding
-    n_jobs = 4
+    n_jobs = 30
     sparse_features = ['task_id', 'adv_id', 'label']
 
 
