@@ -26,3 +26,6 @@ $ tree -L 1
 ├── testmulti_process_0911.py    # 人造的数据集用于测试代码
 └── test_w2v_feature.py
 ```
+
+1. data_reprocess_step1.py 保存为两个pkl文件，其中一个为所有数据，另一个为展开cmr的所有数据
+1. data_reprocess_step2.py 加入统计特征，进行target encoding，具体的是使用label的mean作为target encodeing
