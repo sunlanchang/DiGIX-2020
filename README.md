@@ -29,3 +29,4 @@ $ tree -L 1
 
 1. data_reprocess_step1.py 保存为两个pkl文件，其中一个为所有数据，另一个为展开cmr的所有数据
 1. data_reprocess_step2.py 加入统计特征，进行target encoding，具体的是使用label的mean作为target encodeing
+1. data_reprocess_step3.py 对cmr做embedding，对用户过去一天的序列做embedding
