@@ -16,7 +16,7 @@ def get_embedding(f1_f2,f1):
         buf_ = np.zeros(64)
         for j in i.strip().split(' '):
             buf_ = buf_+wv[j]
-        buf_ = buf_/len(i)
+        buf_ = buf_/len(i) # 求平均
         buf_f1 = list_df.at[ind, f1]
         buf__ = []
         buf_ = buf_.tolist()
