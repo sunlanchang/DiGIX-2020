@@ -147,6 +147,7 @@ Cache.cache_data(data, nm_marker=f'data_step_1_feature_0924_r{sample_rate}')
 
 # 提取相对count特征
 ## 列并行
+
 from multiprocessing import Pool
 
 cate_cols = ['task_id', 'adv_id', 'creat_type_cd', 'adv_prim_id', 'dev_id', 'inter_type_cd', 'slot_id', 'spread_app_id',
