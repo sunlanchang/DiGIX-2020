@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
+# %%
+from os import sep
 import shutil
 from pathlib import Path
 import pandas as pd
@@ -28,6 +30,7 @@ from tqdm import tqdm
 import os
 import random
 
+# %%
 
 os.environ["CUDA_DEVICE_ORDER"] = 'PCI_BUS_ID'
 os.environ["CUDA_VISIBLE_DEVICES"] = '0,1,2,3'
@@ -37,9 +40,11 @@ SEED = 123
 os.environ['PYTHONHASHSEED'] = str(SEED)
 random.seed(SEED)
 np.random.seed(SEED)
-tf.set_random_seed(SEED)
+tf.random.set_seed(SEED)
+# tf.set_random_seed(SEED)
 
-config = tf.ConfigProto()
+# config = tf.ConfigProto()
+config = tf.compat.v1.ConfigProto()
 config.gpu_options.allow_growth = True  # allocate dynamically
 
 parser = argparse.ArgumentParser()
@@ -73,6 +78,7 @@ parser.add_argument('--val_examples', type=int,
 args = parser.parse_args()
 
 
+# %%
 def get_callbacks():
 
     checkpoint = tf.keras.callbacks.ModelCheckpoint("checkpoint/epoch_{epoch:02d}.hdf5",
@@ -171,12 +177,17 @@ def reduce_mem(df):
     return df
 
 
+# %%
 def auroc(y_true, y_pred):
     return tf.py_func(roc_auc_score, (y_true, y_pred), tf.double)
 
 
-data = pickle.load(open('data/data_shift_count_cmr.pkl', 'rb'))
+# %%
+# data = pickle.load(open('data/data_shift_count_cmr.pkl', 'rb'))
+data = pd.read_csv(
+    '/home/zhangqibot/proj/digix/zlh/slc/slc/data/train_data.csv', sep='|', dtype=str, nrows=10000)
 
+# %%
 y_train_val = pd.read_pickle('data/label.pkl')
 
 data.drop(columns=[], inplace=True)
@@ -191,57 +202,7 @@ need_drop_feature = ['label',
                      'communication_onlinerate',
                      'dev_id',
                      'dev_id_count',
-                     'uid_count',
-
-                     'device_size_left_shift_1',
-                     'device_size_left_shift_2',
-                     'device_size_left_shift_3',
-                     'his_app_size_left_shift_1',
-                     'his_app_size_left_shift_2',
-                     'his_app_size_left_shift_3',
-                     'his_on_shelf_time_left_shift_1',
-                     'his_on_shelf_time_left_shift_2',
-                     'his_on_shelf_time_left_shift_3',
-                     'app_score_left_shift_1',
-                     'app_score_left_shift_2',
-                     'app_score_left_shift_3',
-                     'list_time_left_shift_1',
-                     'list_time_left_shift_2',
-                     'list_time_left_shift_3',
-                     'device_price_left_shift_1',
-                     'device_price_left_shift_2',
-                     'device_price_left_shift_3',
-                     'up_life_duration_left_shift_1',
-                     'up_life_duration_left_shift_2',
-                     'up_life_duration_left_shift_3',
-                     'up_membership_grade_left_shift_1',
-                     'up_membership_grade_left_shift_2',
-                     'up_membership_grade_left_shift_3',
-                     'membership_life_duration_left_shift_1',
-                     'membership_life_duration_left_shift_2',
-                     'membership_life_duration_left_shift_3',
-                     'consume_purchase_left_shift_1',
-                     'consume_purchase_left_shift_2',
-                     'consume_purchase_left_shift_3',
-                     'communication_avgonline_30d_left_shift_1',
-                     'communication_avgonline_30d_left_shift_2',
-                     'communication_avgonline_30d_left_shift_3',
-                     'device_size_left_diff',
-                     'his_app_size_left_diff',
-                     'his_on_shelf_time_left_diff',
-                     'app_score_left_diff',
-                     'list_time_left_diff',
-                     'device_price_left_diff',
-                     'up_life_duration_left_diff',
-                     'up_membership_grade_left_diff',
-                     'membership_life_duration_left_diff',
-                     'consume_purchase_left_diff',
-                     'communication_avgonline_30d_left_diff',
-
-                     'cmr_0', 'cmr_1', 'cmr_2', 'cmr_3', 'cmr_4', 'cmr_5', 'cmr_6', 'cmr_7', 'cmr_8', 'cmr_9',
-                     'cmr_10', 'cmr_11', 'cmr_12', 'cmr_13', 'cmr_14', 'cmr_15', 'cmr_16',
-                     'cmr_17', 'cmr_18', 'cmr_19', 'cmr_20', 'cmr_21', 'cmr_22', 'cmr_23',
-                     'cmr_None']
+                     'uid_count', ]
 
 data.drop(columns=need_drop_feature, inplace=True)
 
