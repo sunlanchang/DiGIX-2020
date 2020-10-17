@@ -33,6 +33,7 @@ train_data.csv给定的特征包含了
 - 广告特征比如：task_id adv_id creative_type_cd...
 - 用户和广告交互的时间：pd_d (训练集pt_d=1~7 测试集pt_d=8)
 
+```
 label 标签
 uid 匿名化处理后的用户唯一标识
 task_id 广告任务唯一标识
@@ -69,6 +70,7 @@ communication_onlinerate手机在线时段
 communication_avgonline_30d 手机日在线时长
 indu_name 广告行业信息
 pt_d 行为发生的时间
+```
 
 **For Details**
 
