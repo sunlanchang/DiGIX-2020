@@ -19,15 +19,19 @@ from transformers import BertForMaskedLM
 from transformers import BertTokenizerFast
 from transformers import BertConfig
 
+import ipdb
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
-paths = [str(x) for x in Path(".").glob("tmp/lxf.txt")]
+uid_task_id_sequence_path = 'data/feature_sequence/uid_task_id.txt'
+paths = [str(x) for x in Path(".").glob('data/feature_sequence/*.txt')]
 
 tokenizer = Tokenizer(WordLevel())
 tokenizer.pre_tokenizer = Whitespace()
 # trainer = trainers.BpeTrainer(
 trainer = trainers.WordPieceTrainer(
     special_tokens=["[UNK]", "[CLS]", "[SEP]", "[PAD]", "[MASK]"])
-tokenizer.train(trainer, ['./tmp/lxf.txt'])
+tokenizer.train(trainer, [uid_task_id_sequence_path])
 tokenizer.post_processor = TemplateProcessing(
     single="[CLS] $A [SEP]",
     pair="[CLS] $A [SEP] $B:1 [SEP]:1",
@@ -38,7 +42,7 @@ tokenizer.post_processor = TemplateProcessing(
 )
 
 # tokenizer.save_model("tmp")
-tokenizer.model.save('./tmp', 'lxf')
+tokenizer.model.save('data/bert_and_tokenizer', 'uid_task_id')
 
 
 # tokenizer = ByteLevelBPETokenizer(
@@ -46,12 +50,14 @@ tokenizer.model.save('./tmp', 'lxf')
 #     "./tmp/merges.txt",
 # )
 
-
+# task id的词汇表大小
+task_id_vocab_size = 6033
 config = BertConfig(
-    vocab_size=52_000,
-    max_position_embeddings=514,
-    num_attention_heads=12,
-    num_hidden_layers=6,
+    vocab_size=task_id_vocab_size,
+    hidden_size=128,
+    num_hidden_layers=2,
+    num_attention_heads=2,
+    max_position_embeddings=512,
     type_vocab_size=1,
 )
 
@@ -61,14 +67,15 @@ config = BertConfig(
 # )
 # tokenizer.enable_truncation(max_length=512)
 # tokenizer = BertTokenizerFast.from_pretrained("./tmp", max_len=512)
-tokenizer = BertTokenizerFast('tmp/lxf-vocab.txt')
+# uid_task_id_sequence_path = 'data/feature_sequence/uid_task_id.txt'
+tokenizer = BertTokenizerFast('data/bert_and_tokenizer/uid_task_id-vocab.txt')
 
 model = BertForMaskedLM(config=config)
 
 dataset = LineByLineTextDataset(
     tokenizer=tokenizer,
-    file_path="./tmp/lxf.txt",
-    block_size=128,
+    file_path=uid_task_id_sequence_path,
+    block_size=512,  # 序列最大长度
 )
 
 data_collator = DataCollatorForLanguageModeling(
@@ -79,7 +86,7 @@ training_args = TrainingArguments(
     output_dir="./tmp",
     overwrite_output_dir=True,
     num_train_epochs=1,
-    per_gpu_train_batch_size=64,
+    per_gpu_train_batch_size=1,
     save_steps=10_000,
     save_total_limit=2,
 )
