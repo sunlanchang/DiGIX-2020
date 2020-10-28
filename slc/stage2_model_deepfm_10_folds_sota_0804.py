@@ -50,11 +50,10 @@ tf.random.set_seed(SEED)
 os.environ["PYTHONHASHSEED"] = str(SEED)
 os.environ["CUDA_DEVICE_ORDER"] = 'PCI_BUS_ID'
 # slc 显卡的个数需要修改
-os.environ["CUDA_VISIBLE_DEVICES"] = '0,1,2,3'
+os.environ["CUDA_VISIBLE_DEVICES"] = ''
 gpus = tf.config.experimental.list_physical_devices('GPU')
 for device in gpus:
     tf.config.experimental.set_memory_growth(device, True)
-tf.config.experimental.set_memory_growth(gpus[0], True)
 
 
 # ## 加载基础特征 44维sparse特征 249维dense特征 总计293维
@@ -120,9 +119,13 @@ def get_emb_matrix(col):
     # res = p.map(get_emb_matrix, last_seq_list)
 last_seq_list = ['label']
 res = get_emb_matrix('label')
+# res: {'label', [array1, array2]}
+# aray1.shape: (13769436, 40)
+# array2.shape: (4, 32)
 id_list_dict_emb_all = {}
-for item in res:
-    id_list_dict_emb_all.update(item)
+# for item in res:
+# id_list_dict_emb_all.update(item)
+id_list_dict_emb_all = res
 # del res, item
 del res
 gc.collect()
@@ -1140,8 +1143,6 @@ def M(emb_mtx_f1_1, emb_mtx_f1_2, emb_mtx_f1_3, emb_mtx_f1_4, emb_mtx_f1_5,
     inputs_all = list(seq_inputs_dict.values())+inputs_all  # 输入层list
     # slc
     # masks = tf.equal(seq_inputs_dict['task_id'], 0)
-    import pdb
-    pdb.set_trace()
     masks = tf.equal(seq_inputs_dict['label'], 0)
     # 普通序列+label序列
     layers2concat = []
@@ -1156,12 +1157,17 @@ def M(emb_mtx_f1_1, emb_mtx_f1_2, emb_mtx_f1_3, emb_mtx_f1_4, emb_mtx_f1_5,
                                                activation='relu')
             x = cov_layer(x)
         layers2concat.append(x)
-    x = tf.keras.layers.concatenate(layers2concat)
+    # slc
+    # x = tf.keras.layers.concatenate(layers2concat)
+    # x: (None, 40, 8) (batch, len, hidden_size)
+    x = layers2concat[0]
 #!################################################################################################################
 
+    # x: (None, 40, 8)
     x = trans_net(x, masks, hidden_unit=256)
     max_pool = tf.keras.layers.GlobalMaxPooling1D()
     average_pool = tf.keras.layers.GlobalAveragePooling1D()
+    # xmaxpool: (None, 8)
     xmaxpool = max_pool(x)
     xmeanpool = average_pool(x)
 
@@ -1188,7 +1194,7 @@ def M(emb_mtx_f1_1, emb_mtx_f1_2, emb_mtx_f1_3, emb_mtx_f1_4, emb_mtx_f1_5,
 
     mix = concatenate([trans_output, f1_f2_output,
                        dnn_input], axis=-1)  # !#mix
-
+    print('mix shape', mix.shape)
     dnn_output = DNN(dnn_hidden_units, dnn_activation, l2_reg_dnn, dnn_dropout,
                      dnn_use_bn, seed)(mix)
 
@@ -1820,7 +1826,6 @@ skf = StratifiedKFold(
     n_splits=10, random_state=random_state, shuffle=True)  # 抽90% 训练
 
 
-# In[8]:
 
 
 def get_input():
@@ -1969,8 +1974,6 @@ def get_input():
 
 
 # ## 本脚本仅保留第10折的运行记录
-
-# In[9]:
 
 
 count = 0
