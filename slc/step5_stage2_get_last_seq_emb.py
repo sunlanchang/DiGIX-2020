@@ -12,12 +12,12 @@ from tqdm import tqdm
 from gensim.models import Word2Vec
 import sys
 from tensorflow.keras.preprocessing.sequence import pad_sequences
-pd.set_option('display.max_columns', None)
-pd.set_option('display.max_rows', None)
-pd.set_option('precision', 5)
-pd.set_option('display.float_format', lambda x: '%.5f' % x)
-pd.set_option('max_colwidth', 200)
-pd.set_option('display.width', 5000)
+# pd.set_option('display.max_columns', None)
+# pd.set_option('display.max_rows', None)
+# pd.set_option('precision', 5)
+# pd.set_option('display.float_format', lambda x: '%.5f' % x)
+# pd.set_option('max_colwidth', 200)
+# pd.set_option('display.width', 5000)
 
 print('start!')
 
