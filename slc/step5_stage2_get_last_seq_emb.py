@@ -152,9 +152,12 @@ from multiprocessing import Pool
 if __name__ == '__main__':
     # 获取过去的list + 当前的一行
     # 得到id_list_dict和tx一样
-    poc_feature_list = ['creat_type_cd','tags','spread_app_id','task_id','adv_id','label']#'task_id','adv_id','dev_id','inter_type_cd','spread_app_id','tags','app_first_class','app_second_class','his_app_size','his_on_shelf_time','app_score',,'creat_type_cd','adv_prim_id','indu_name'
-    with Pool(6) as p:
-        p.map(gen_list_df, poc_feature_list)
+    # 'creat_type_cd','tags','spread_app_id','task_id','adv_id']#'task_id','adv_id','dev_id','inter_type_cd','spread_app_id','tags','app_first_class','app_second_class','his_app_size','his_on_shelf_time','app_score',,'creat_type_cd','adv_prim_id','indu_name'
+    poc_feature_list = ['label', ]
+    # slc 单线程
+    # with Pool(6) as p:
+    # p.map(gen_list_df, poc_feature_list)
+    gen_list_df('label')
 '''
 以下是一些检查
 '''

@@ -4,6 +4,7 @@
 # In[1]:
 
 
+import pdb
 import tensorflow.keras.backend as K
 from sklearn.model_selection import train_test_split, StratifiedKFold
 from multiprocessing import Pool
@@ -51,14 +52,16 @@ os.environ["CUDA_DEVICE_ORDER"] = 'PCI_BUS_ID'
 # slc 显卡的个数需要修改
 os.environ["CUDA_VISIBLE_DEVICES"] = '0,1,2,3'
 gpus = tf.config.experimental.list_physical_devices('GPU')
+for device in gpus:
+    tf.config.experimental.set_memory_growth(device, True)
 tf.config.experimental.set_memory_growth(gpus[0], True)
 
 
 # ## 加载基础特征 44维sparse特征 249维dense特征 总计293维
 
-
+# slc
 deepfm_data = Cache.reload_cache('CACHE_sampling_pro_feature.pkl')
-# label = deepfm_data[deepfm_data["raw_index"]<41907133]['label']# .values
+# label = deepfm_data[deepfm_data["raw_index"]<6000_0000]['label']# .values
 # slc 训练集个数修正为6千万
 label = deepfm_data[deepfm_data["raw_index"] < 6000_0000]['label']  # .values
 
@@ -110,32 +113,39 @@ def get_emb_matrix(col):
     return {col: [id_list_dict_all['id_list'], emb_matrix]}
 
 
-last_seq_list = ['creat_type_cd', 'tags',
-                 'spread_app_id', 'task_id', 'adv_id', 'label']
-with Pool(3) as p:
-    res = p.map(get_emb_matrix, last_seq_list)
+# slc
+# last_seq_list = ['label', 'creat_type_cd', 'tags','spread_app_id', 'task_id', 'adv_id']
+# last_seq_list = []
+# with Pool(6) as p:
+    # res = p.map(get_emb_matrix, last_seq_list)
+last_seq_list = ['label']
+res = get_emb_matrix('label')
 id_list_dict_emb_all = {}
 for item in res:
     id_list_dict_emb_all.update(item)
-del res, item
+# del res, item
+del res
 gc.collect()
 
 GlobalSeqLength = 40
 base_inputdim_dict = {}
 for var in id_list_dict_emb_all.keys():
     base_inputdim_dict[var] = id_list_dict_emb_all[var][1].shape[0]
-base_embdim_dict = {'creat_type_cd': 32, 'tags': 32,
-                    'spread_app_id': 32, 'task_id': 32, 'adv_id': 32, 'label': 32}
-conv1d_info_dict = {'creat_type_cd': 8, 'tags': 8,
-                    'spread_app_id': 8, 'task_id': 16, 'adv_id': 32, 'label': 8}
-TRAINABLE_DICT = {'creat_type_cd': False, 'tags': False,
-                  'spread_app_id': False, 'task_id': False, 'adv_id': False, 'label': False}
+# base_embdim_dict = {'creat_type_cd': 32, 'tags': 32,
+#                     'spread_app_id': 32, 'task_id': 32, 'adv_id': 32, 'label': 32}
+# conv1d_info_dict = {'creat_type_cd': 8, 'tags': 8,
+#                     'spread_app_id': 8, 'task_id': 16, 'adv_id': 32, 'label': 8}
+# TRAINABLE_DICT = {'creat_type_cd': False, 'tags': False,
+#                   'spread_app_id': False, 'task_id': False, 'adv_id': False, 'label': False}
+base_embdim_dict = {'label': 32}
+conv1d_info_dict = {'label': 8}
+TRAINABLE_DICT = {'label': False}
+# base_embdim_dict = {}
+# conv1d_info_dict = {}
+# TRAINABLE_DICT = {}
 arr_name_list = list(id_list_dict_emb_all.keys())  # 过去行为序列
 
-
 # ## 神经网络部分 transformer学习序列特征，user_item交叉结构学习相似度，deepfm学习基础特征，使用focalloss做二分类
-
-# In[4]:
 
 
 def multi_category_focal_loss2(gamma=2., alpha=.25):
@@ -1128,7 +1138,11 @@ def M(emb_mtx_f1_1, emb_mtx_f1_2, emb_mtx_f1_3, emb_mtx_f1_4, emb_mtx_f1_5,
                   input_35_f1, input_35_f2]
     seq_inputs_dict = get_seq_input_layers(cols=arr_name_list)
     inputs_all = list(seq_inputs_dict.values())+inputs_all  # 输入层list
-    masks = tf.equal(seq_inputs_dict['task_id'], 0)
+    # slc
+    # masks = tf.equal(seq_inputs_dict['task_id'], 0)
+    import pdb
+    pdb.set_trace()
+    masks = tf.equal(seq_inputs_dict['label'], 0)
     # 普通序列+label序列
     layers2concat = []
     for index, col in enumerate(arr_name_list):
@@ -1472,16 +1486,16 @@ w2v_35_f2_test = np.load(w2v_f2_test_path_list[34])
 
 sparse_features = ['task_id', 'adv_id', 'creat_type_cd', 'adv_prim_id', 'dev_id', 'inter_type_cd', 'slot_id', 'age', 'city_rank',
                    'spread_app_id', 'tags', 'app_first_class', 'app_second_class', 'city', 'device_name', 'career',
-                   'gender', 'net_type', 'residence', 'emui_dev', 'indu_name',
-                   'communication_onlinerate_1', 'communication_onlinerate_2', 'communication_onlinerate_3',
-                   'communication_onlinerate_4', 'communication_onlinerate_5', 'communication_onlinerate_6',
-                   'communication_onlinerate_7', 'communication_onlinerate_8', 'communication_onlinerate_9',
-                   'communication_onlinerate_10', 'communication_onlinerate_11', 'communication_onlinerate_12',
-                   'communication_onlinerate_13', 'communication_onlinerate_14', 'communication_onlinerate_15',
-                   'communication_onlinerate_16', 'communication_onlinerate_17', 'communication_onlinerate_18',
-                   'communication_onlinerate_19', 'communication_onlinerate_20', 'communication_onlinerate_21',
-                   'communication_onlinerate_22', 'communication_onlinerate_23']  # e.g.:05db9164
-dense_features = ['device_size', 'his_app_size', 'his_on_shelf_time', 'app_score', 'list_time', 'device_price', 'up_life_duration',
+                   'gender', 'net_type', 'residence', 'emui_dev', 'indu_name', ]
+#    'communication_onlinerate_1', 'communication_onlinerate_2', 'communication_onlinerate_3',
+#    'communication_onlinerate_4', 'communication_onlinerate_5', 'communication_onlinerate_6',
+#    'communication_onlinerate_7', 'communication_onlinerate_8', 'communication_onlinerate_9',
+#    'communication_onlinerate_10', 'communication_onlinerate_11', 'communication_onlinerate_12',
+#    'communication_onlinerate_13', 'communication_onlinerate_14', 'communication_onlinerate_15',
+#    'communication_onlinerate_16', 'communication_onlinerate_17', 'communication_onlinerate_18',
+#    'communication_onlinerate_19', 'communication_onlinerate_20', 'communication_onlinerate_21',
+#    'communication_onlinerate_22', 'communication_onlinerate_23']  # e.g.:05db9164
+dense_features = ['device_size', 'his_app_size', 'his_on_shelf_time', 'list_time', 'device_price', 'up_life_duration',
                   'up_membership_grade', 'membership_life_duration', 'consume_purchase', 'communication_avgonline_30d', 'task_id_count',
                   'task_id_pt_d_count', 'adv_id_count', 'adv_id_pt_d_count',
                   'creat_type_cd_count', 'creat_type_cd_pt_d_count',
@@ -1497,52 +1511,54 @@ dense_features = ['device_size', 'his_app_size', 'his_on_shelf_time', 'app_score
                   'age_count', 'age_pt_d_count', 'net_type_count',
                   'net_type_pt_d_count', 'residence_count', 'residence_pt_d_count',
                   'emui_dev_count', 'emui_dev_pt_d_count', 'indu_name_count',
-                  'indu_name_pt_d_count', 'communication_onlinerate_1_count',
-                  'communication_onlinerate_1_pt_d_count',
-                  'communication_onlinerate_2_count',
-                  'communication_onlinerate_2_pt_d_count',
-                  'communication_onlinerate_3_count',
-                  'communication_onlinerate_3_pt_d_count',
-                  'communication_onlinerate_4_count',
-                  'communication_onlinerate_4_pt_d_count',
-                  'communication_onlinerate_5_count',
-                  'communication_onlinerate_5_pt_d_count',
-                  'communication_onlinerate_6_count',
-                  'communication_onlinerate_6_pt_d_count',
-                  'communication_onlinerate_7_count',
-                  'communication_onlinerate_7_pt_d_count',
-                  'communication_onlinerate_8_count',
-                  'communication_onlinerate_8_pt_d_count',
-                  'communication_onlinerate_9_count',
-                  'communication_onlinerate_9_pt_d_count',
-                  'communication_onlinerate_10_count',
-                  'communication_onlinerate_10_pt_d_count',
-                  'communication_onlinerate_11_count',
-                  'communication_onlinerate_11_pt_d_count',
-                  'communication_onlinerate_12_count',
-                  'communication_onlinerate_12_pt_d_count',
-                  'communication_onlinerate_13_count',
-                  'communication_onlinerate_13_pt_d_count',
-                  'communication_onlinerate_14_count',
-                  'communication_onlinerate_14_pt_d_count',
-                  'communication_onlinerate_15_count',
-                  'communication_onlinerate_15_pt_d_count',
-                  'communication_onlinerate_16_count',
-                  'communication_onlinerate_16_pt_d_count',
-                  'communication_onlinerate_17_count',
-                  'communication_onlinerate_17_pt_d_count',
-                  'communication_onlinerate_18_count',
-                  'communication_onlinerate_18_pt_d_count',
-                  'communication_onlinerate_19_count',
-                  'communication_onlinerate_19_pt_d_count',
-                  'communication_onlinerate_20_count',
-                  'communication_onlinerate_20_pt_d_count',
-                  'communication_onlinerate_21_count',
-                  'communication_onlinerate_21_pt_d_count',
-                  'communication_onlinerate_22_count',
-                  'communication_onlinerate_22_pt_d_count',
-                  'communication_onlinerate_23_count',
-                  'communication_onlinerate_23_pt_d_count', 'uidtask_id_nunique',
+                  'indu_name_pt_d_count',
+                  #   'communication_onlinerate_1_count',
+                  #   'communication_onlinerate_1_pt_d_count',
+                  #   'communication_onlinerate_2_count',
+                  #   'communication_onlinerate_2_pt_d_count',
+                  #   'communication_onlinerate_3_count',
+                  #   'communication_onlinerate_3_pt_d_count',
+                  #   'communication_onlinerate_4_count',
+                  #   'communication_onlinerate_4_pt_d_count',
+                  #   'communication_onlinerate_5_count',
+                  #   'communication_onlinerate_5_pt_d_count',
+                  #   'communication_onlinerate_6_count',
+                  #   'communication_onlinerate_6_pt_d_count',
+                  #   'communication_onlinerate_7_count',
+                  #   'communication_onlinerate_7_pt_d_count',
+                  #   'communication_onlinerate_8_count',
+                  #   'communication_onlinerate_8_pt_d_count',
+                  #   'communication_onlinerate_9_count',
+                  #   'communication_onlinerate_9_pt_d_count',
+                  #   'communication_onlinerate_10_count',
+                  #   'communication_onlinerate_10_pt_d_count',
+                  #   'communication_onlinerate_11_count',
+                  #   'communication_onlinerate_11_pt_d_count',
+                  #   'communication_onlinerate_12_count',
+                  #   'communication_onlinerate_12_pt_d_count',
+                  #   'communication_onlinerate_13_count',
+                  #   'communication_onlinerate_13_pt_d_count',
+                  #   'communication_onlinerate_14_count',
+                  #   'communication_onlinerate_14_pt_d_count',
+                  #   'communication_onlinerate_15_count',
+                  #   'communication_onlinerate_15_pt_d_count',
+                  #   'communication_onlinerate_16_count',
+                  #   'communication_onlinerate_16_pt_d_count',
+                  #   'communication_onlinerate_17_count',
+                  #   'communication_onlinerate_17_pt_d_count',
+                  #   'communication_onlinerate_18_count',
+                  #   'communication_onlinerate_18_pt_d_count',
+                  #   'communication_onlinerate_19_count',
+                  #   'communication_onlinerate_19_pt_d_count',
+                  #   'communication_onlinerate_20_count',
+                  #   'communication_onlinerate_20_pt_d_count',
+                  #   'communication_onlinerate_21_count',
+                  #   'communication_onlinerate_21_pt_d_count',
+                  #   'communication_onlinerate_22_count',
+                  #   'communication_onlinerate_22_pt_d_count',
+                  #   'communication_onlinerate_23_count',
+                  #   'communication_onlinerate_23_pt_d_count',
+                  'uidtask_id_nunique',
                   'uidtask_id_pt_d_nunique', 'uidadv_id_nunique',
                   'uidadv_id_pt_d_nunique', 'uiddev_id_nunique',
                   'uiddev_id_pt_d_nunique', 'uidspread_app_id_nunique',
@@ -1657,15 +1673,19 @@ dense_features = ['device_size', 'his_app_size', 'his_on_shelf_time', 'app_score
 # deepfm_data[dense_features] = deepfm_data[dense_features].fillna(0, )
 
 # 1.Label Encoding for sparse features,and do simple Transformation for dense features
+# slc
 for feat in tqdm(sparse_features):
     lbe = LabelEncoder()
     deepfm_data[feat] = lbe.fit_transform(deepfm_data[feat])
 
 for feat in tqdm(dense_features):
     mms = MinMaxScaler(feature_range=(0, 1))
-    deepfm_data[feat] = mms.fit_transform(
-        deepfm_data[feat].values.reshape(-1, 1)).astype(np.float32)
-del mms, lbe
+    try:
+        deepfm_data[feat] = mms.fit_transform(
+            deepfm_data[feat].values.reshape(-1, 1)).astype(np.float32)
+    except:
+        print(f'{feat} missing !')
+# del mms, lbe
 
 # 2.count #unique features for each sparse field,and record dense feature field name
 
@@ -1684,19 +1704,19 @@ feature_names.append("raw_index")
 
 deepfm_train_ = pd.DataFrame(
     {name: deepfm_data[name] for name in feature_names})
-deepfm_train = deepfm_train_[deepfm_train_["raw_index"] < 41907133]
+deepfm_train = deepfm_train_[deepfm_train_["raw_index"] < 6000_0000]
 
 
 deepfm_test_ = pd.DataFrame(
     {name: deepfm_data[name] for name in feature_names})
-deepfm_test = deepfm_test_[deepfm_test_["raw_index"] >= 41907133]
+deepfm_test = deepfm_test_[deepfm_test_["raw_index"] >= 6000_0000]
 
 # 生成index
 try:
     print(deepfm_data['id'].count())
 except:
     deepfm_data['id'] = -111
-deepfm_train_ = deepfm_data.loc[deepfm_data["raw_index"] < 41907133, [
+deepfm_train_ = deepfm_data.loc[deepfm_data["raw_index"] < 6000_0000, [
     'id', 'label']]
 del deepfm_test_
 deepfm_data = deepfm_data[['raw_index']]
@@ -1771,9 +1791,9 @@ def get_callbacks(fold, if_valid=True):
 # test_B = Cache.reload_cache('CACHE_test_B.pkl')
 # test_B = test_B.reset_index()
 # test_B.rename(columns={'index':'raw_index'},inplace=True)
-# test_B['raw_index'] = test_B['raw_index']+41907133
+# test_B['raw_index'] = test_B['raw_index']+6000_0000
 # test_B_id = test_B[['raw_index','id']]
-# deepfm_test_id = deepfm_data[deepfm_data["raw_index"]>=41907133]
+# deepfm_test_id = deepfm_data[deepfm_data["raw_index"]>=6000_0000]
 # res_id = pd.merge(deepfm_test_id[['raw_index']],test_B_id,on='raw_index',how='left')['id']
 # del test_B,test_B_id
 # gc.collect()
@@ -1783,9 +1803,9 @@ def get_callbacks(fold, if_valid=True):
 test_A = Cache.reload_cache('CACHE_test_A.pkl')
 test_A = test_A.reset_index()
 test_A.rename(columns={'index': 'raw_index'}, inplace=True)
-test_A['raw_index'] = test_A['raw_index']+41907133
+test_A['raw_index'] = test_A['raw_index']+6000_0000
 test_A_id = test_A[['raw_index', 'id']]
-deepfm_test_id = deepfm_data[deepfm_data["raw_index"] >= 41907133]
+deepfm_test_id = deepfm_data[deepfm_data["raw_index"] >= 6000_0000]
 res_id = pd.merge(deepfm_test_id[['raw_index']],
                   test_A_id, on='raw_index', how='left')['id']
 del test_A, test_A_id
@@ -1957,8 +1977,8 @@ count = 0
 bs = 2048
 gc.collect()
 deepfm_data = deepfm_data.reset_index(drop=True).reset_index()
-idtrain = list(deepfm_data[deepfm_data["raw_index"] < 41907133]['index'])
-idtest = list(deepfm_data[deepfm_data["raw_index"] >= 41907133]['index'])
+idtrain = list(deepfm_data[deepfm_data["raw_index"] < 6000_0000]['index'])
+idtest = list(deepfm_data[deepfm_data["raw_index"] >= 6000_0000]['index'])
 del deepfm_data
 gc.collect()
 for i, (train_index, test_index) in enumerate(skf.split(trainvalid, trainvalid['label'])):
@@ -2045,9 +2065,3 @@ df_save.to_pickle('model0929_addseq_10_folds_oof.pkl')
 res = res[['id', 'probability']]
 res = res.sort_values('id')
 res.to_csv('submission_nn_zlh_10folds_0929_addseq.csv', index=False)
-
-
-# In[12]:
-
-
-res.head()
